@@ -1,0 +1,83 @@
+library(shiny)
+library(shinyjs)
+library(dplyr)
+library(DT)
+setwd("/Users/diana")
+# Chargement de la liste patients et lui affecter un nouveau nom:
+listePatient <- Lung3_metadata %>% 
+  select(title)
+
+# Renomer certaines colonnes les plus pertinentes (meilleure lisibilité):
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.gender"] <- "Sexe"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.histology"] <- "Histologie"
+names(Lung3_metadata)[names(Lung3_metadata)=="source.location"] <- "Source"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.tumor.size.maximumdiameter"] <- "Taille_Tumeur"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.primary.tumor"] <- "Tumeur_Primaire"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.nodes"] <- "Stade_noeuds"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.grade"] <- "Grade"
+
+
+
+#On récupère le patient grâce à son Id en evitant les doublons:
+getPatient <- function(id) {
+  resultPatient <- Lung3_metadata %>% 
+    filter(title == id) %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Tumeur_Primaire, Stade_noeuds, Grade)
+}
+
+getAllPatient <- function(){
+  resultAllPatient <- Lung3_metadata %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Tumeur_Primaire, Stade_noeuds, Grade)
+}
+
+
+#Affichage d'un camembert sur la répartition H & F:
+SexePlot <- function(){
+  table(Lung3_metadata$Sexe)
+  tmpTab <- table(Lung3_metadata$Sexe)
+  
+  
+  df <- data.frame(
+    group = c("H", "F"),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x="", y=value, fill=group))+
+    geom_bar(width = 1, stat = "identity")
+  
+  pie <- bp + coord_polar("y", start=0)
+  pie + scale_fill_brewer(palette="Dark2")# Utiliser les palettes RColorBrewer;
+}
+
+#Affichage d'un diagramme en batons des differentes histologies:
+histoPlot <- function(){
+  table(Lung3_metadata$Histologie)
+  tmpTab <- table(Lung3_metadata$Histologie)
+  
+  
+  df <- data.frame(
+    group = names(tmpTab),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x="", y=value, fill=group))+
+    geom_bar(width = 1, stat = "identity")
+  plot(tmpTab,col="Green", main="Types des Histologies",lwd=40,type="h",lend="butt",ylab="")
+  
+}
+
+taillePlot <- function(){
+  table(Lung3_metadata$Taille_Tumeur)
+  tmpTab <- table(Lung3_metadata$Taille_Tumeur)
+  
+  df <- data.frame(
+    group = names(tmpTab),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x="", y=value, fill=group))+
+    geom_bar(width = 3, stat = "identity")
+  barplot(tmpTab,col="yellow", main="Differentes tailles tumeurs",lwd=30,type="h",lend="butt",ylab="")
+  
+}
+
