@@ -1,0 +1,113 @@
+setwd("/Users/diana")
+# retirer la colonne des identificateurs
+DataNew=`Expression&tumor`[,-1]
+summary(DataNew)
+# Construction des échantillons d'apprentissage et des échantillons de test
+set.seed(218) # initialisation du générateur
+# Extraction des échantillons
+test.ratio=.2 # part de l'échantillon test
+npop=nrow(DataNew) # nombre de lignes dans les données
+nvar=ncol(DataNew) # nombre de colonnes
+# taille de l'échantillon test
+ntest=ceiling(npop*test.ratio)
+# indices de l'échantillon test
+testi=sample(1:npop,ntest)
+# indices de l'échantillon d'apprentissage
+appri=setdiff(1:npop,testi)
+# construction de l'échantillon d'apprentissage
+datapq=DataNew[appri,]
+# construction de l'échantillon test
+datestq=DataNew[testi,]
+summary(datapq)
+
+# Exemple de modélisation avec un arbre de décision
+library(rpart)
+fitq.tree=rpart(V250~.,data=datapq,
+                parms=list(split="information"),method="class")
+summary(fitq.tree) # description de l'arbre
+print(fitq.tree)
+plot(fitq.tree)
+text(fitq.tree)
+library(rattle)
+install.packages("rattle", repos="https://rattle.togaware.com", type="source")
+library(rpart.plot)
+library(RColorBrewer)
+fancyRpartPlot(fitq.tree)
+
+#   Elagage simple
+set.seed(4) # autre initialisation du generateur
+# Extraction des echantillons
+# part de l¡¦echantillon de validation
+valid.ratio=.2
+# nombre de lignes dans les donnees restantes
+npop=nrow(datapq)
+# taille de l¡¦echantillon de validation
+nvalid=ceiling(npop*valid.ratio)
+# indices de l¡¦echantillon de validation
+validi=sample(1:npop,nvalid)
+# indices complementaires de l¡¦echantillon de validation
+appri=setdiff(1:npop,validi)
+# construction de l¡¦echantillon d¡¦apprentissage restant
+datap2q=datapq[appri,]
+# construction de l¡¦echantillon de validation
+davalq=datapq[validi,]
+summary(datap2q) # verifications
+summary(davalq)
+library(rpart)
+cpi=1
+for(i in 1:250) {
+  tree_i=rpart(V250~.,data=datap2q,
+               parms=list(split="information"),cp=cpi)
+  pred_i=predict(tree_i,newdata=davalq,type="vector")
+  tab_i=table(pred_i,davalq$V250)
+  cat("cp=",cpi, " err=",(tab_i[1:2, 1:13]+tab_i[1:13, 1:2])/nvalid,"\n")
+  cpi=cpi*0.7
+}
+
+printcp(fitq.tree)
+plotcp(fitq.tree)
+
+pred=predict(fitq.tree,type="class")
+table(pred,datapq$V250)
+
+fitq2.tree=prune(fitq.tree,cp=0.048)
+plot(fitq2.tree)
+text(fitq2.tree,use.n=TRUE)
+
+# Elagage par cv
+xmat = xpred.rpart(fitq.tree,xval=10,
+                   cp=seq(0.1,0.001,length=10))
+# Comparaison de la valeur prédite avec la valeur observée
+xerr=as.integer(datapq$Class)!= xmat
+# Calcul et affichage des estimations des taux d'erreur
+apply(xerr, 2, sum)/nrow(xerr)
+
+fitq3.tree=prune(fitq.tree,cp=0.023)
+print(fitq3.tree)
+
+# Bagging
+
+library(ipred)
+bagging(Class~., nbag=50, data=datapq,coob=TRUE)
+bagging(Class~., nbag=25, data=datapq,coob=TRUE)
+bagging(Class~., nbag=50, control=
+          rpart.control(cp=0.1), data=datapq,coob=TRUE)
+fit.bag=bagging(Class~., nbag=50, data=datapq)
+pred.test=predict(fit.bag,newdata=datestq,type="class")
+table(pred.test,datestq$Class)
+
+# Forêt aléatoire
+# charger la librairie
+library(randomForest)
+# aide en ligne
+?randomForest
+# Avec les seules variables quantitatives :
+fit=randomForest(V250~.,data=datapq,do.trace=20,
+                 importance=TRUE,norm.vote=FALSE)
+print(fit)
+# Importance de chaque variable
+print(round(fit$importance, 2))
+table(predict(fit,datestq),datestq$V250)
+
+
+
