@@ -1,0 +1,106 @@
+library(shinyjs)
+library(DT)
+setwd("/Users/diana")
+ui <- fluidPage(
+  useShinyjs(),
+  title= "ShinyAppLungCancer",
+  
+  #FixedRow : créer une ligne sur la page WEB
+  fixedRow(
+    column(width = 4,
+           #Liste déroulante:
+           selectInput(
+             "patient", 
+             h3("Donnée patient : "),
+             listePatient
+           ),
+           actionButton(
+             "displayList", "Liste de tous les patients", icon("th-list")
+           ),
+           actionButton(
+             "typeSexe", "Proportion H & F", icon("user")
+           ),
+           actionButton(
+             "typeHistoD", "Voir toutes les différentes histologies", icon("list-alt")
+           ),
+           actionButton(
+             "typeTaille", "Differentes tailles de tumeurs", icon("list-alt")
+           )
+    ),
+    #Tester les résultats:
+    column(width = 7,
+           fluidRow(
+             DT::dataTableOutput('table'),
+             #Tous les patients en un tableau:
+             DT::dataTableOutput('tableAllPatients'),
+             
+             plotOutput("typeHF"),
+             plotOutput("typeHisto")
+           )
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  
+  output$table <- DT::renderDataTable(
+    getPatient(input$patient), options = list(lengthChange = FALSE)
+  )
+  
+  #Camembert Proportion H & F:
+  observeEvent(input$typeSexe, {
+    show("typeHF")
+    hide("tableAllPatients")
+    hide("table")
+    hide("typeHisto")
+    output$typeHF <- renderPlot({
+      SexePlot()
+    })
+  })
+  
+  
+  #Batons pour les  differentes histologies:
+  observeEvent(input$typeHistoD, {
+    show("typeHF")
+    hide("tableAllPatients")
+    hide("table")
+    show("typeHisto")
+    output$typeHisto <- renderPlot({
+      histoPlot()
+    })
+  })
+  
+  observeEvent(input$typeTaille, {
+    show("typeHF")
+    hide("tableAllPatients")
+    hide("table")
+    show("typeHisto")
+    output$typeHisto <- renderPlot({
+      taillePlot()
+    })
+  })
+  
+  #Une fois qu'on sélectionne un patient, on va appeler notre fonction
+  #getpatient... qui nous retournera un tableau
+  observeEvent(input$patient, {
+    show("table")
+    hide("tableAllPatients")
+    hide("typeHisto")
+    hide("typeHF")
+  })
+  
+  #On affichera tous les patients si on clique sur le bouton
+  observeEvent(input$displayList, {
+    hide("typeHF")
+    hide("typeHisto")
+    hide("table")
+    show("tableAllPatients")
+    output$tableAllPatients  <- DT::renderDataTable(
+      getAllPatient()
+    )
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
