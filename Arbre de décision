@@ -74,27 +74,18 @@ fitq2.tree=prune(fitq.tree,cp=0.048)
 plot(fitq2.tree)
 text(fitq2.tree,use.n=TRUE)
 
-# Elagage par cv
-xmat = xpred.rpart(fitq.tree,xval=10,
-                   cp=seq(0.1,0.001,length=10))
-# Comparaison de la valeur prédite avec la valeur observée
-xerr=as.integer(datapq$Class)!= xmat
-# Calcul et affichage des estimations des taux d'erreur
-apply(xerr, 2, sum)/nrow(xerr)
 
-fitq3.tree=prune(fitq.tree,cp=0.023)
-print(fitq3.tree)
 
 # Bagging
 
 library(ipred)
-bagging(Class~., nbag=50, data=datapq,coob=TRUE)
-bagging(Class~., nbag=25, data=datapq,coob=TRUE)
-bagging(Class~., nbag=50, control=
+bagging(V250~., nbag=50, data=datapq,coob=TRUE)
+bagging(V250~., nbag=25, data=datapq,coob=TRUE)
+bagging(V250~., nbag=50, control=
           rpart.control(cp=0.1), data=datapq,coob=TRUE)
-fit.bag=bagging(Class~., nbag=50, data=datapq)
+fit.bag=bagging(V250~., nbag=50, data=datapq)
 pred.test=predict(fit.bag,newdata=datestq,type="class")
-table(pred.test,datestq$Class)
+table(pred.test,datestq$V250)
 
 # Forêt aléatoire
 # charger la librairie
