@@ -1,0 +1,956 @@
+setwd("/Users/diana")
+library(shiny)
+library(shinyjs)
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(plotly)
+
+
+library(Biobase)
+library(GEOquery)
+library(limma)
+
+
+library(rpart)
+library(visNetwork)
+install.packages("visNetwork")
+
+library(randomForest)
+
+
+
+Lung3_metadata <- read.csv('Lung3.metadata.csv', sep=";",na.strings = "Not Available", header=T)
+GSE58661_matrix = read.csv('GSE58661_series_matrix.txt', sep="\t", header=T, comment.char="!")
+
+prelevement = names(GSE58661_matrix)
+Lung3_metadata$prelevement = prelevement[2:90]
+
+# Chargement de la liste patients et lui affecter un nouveau nom:
+listePatient <- Lung3_metadata %>% 
+  select(title)
+
+# Renomer certaines colonnes les plus pertinentes (meilleure lisibilit?):
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.gender"] <- "Sexe"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.histology"] <- "Histologie"
+names(Lung3_metadata)[names(Lung3_metadata)=="source.location"] <- "Source"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.tumor.size.maximumdiameter"] <- "Taille_Tumeur"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.primary.tumor"] <- "Stade_T"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.nodes"] <- "Stade_N"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.mets"] <- "Stade_M"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.grade"] <- "Grade"
+names(Lung3_metadata)[names(Lung3_metadata)=="prelevement"] <- "Prelevement"
+
+
+# On regroupe en 2 groupes histologiques
+Lung3_metadata$Histologie <- ifelse(
+  Lung3_metadata$Histologie == "Adenocarcinoma With Mucinous Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma With Papillary Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Acinar Type"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mixed"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mucinous With Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, NOS"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Papillary, NOS"
+  | Lung3_metadata$Histologie == "Solid Type And Acinar"
+  | Lung3_metadata$Histologie == "Papillary Type AND Adenocarcinoma, Bronchiolo-alveolar Features"
+  
+  , "Adenocarcinome"
+  ,  ifelse(
+    Lung3_metadata$Histologie == "Squamous Cell Carcinoma, NOS"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify) with adeno features"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify)endobronchial"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Papillary"
+    | Lung3_metadata$Histologie == "Non-Small Cell"
+    | Lung3_metadata$Histologie == "Non-Small Cell, Pleomorphic Type"
+    | Lung3_metadata$Histologie == "Carcinoma, Large Cell, Neuroendocrine"
+    
+    , "Carcinome"
+    , Lung3_metadata$Histologie)
+)
+
+
+#On recupère le patient grace a son Id en evitant les doublons:
+getPatient <- function(id) {
+  resultPatient <- Lung3_metadata %>% 
+    filter(title == id) %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade, Prelevement)
+}
+
+getAllPatient <- function(){
+  resultAllPatient <- Lung3_metadata %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade)
+}
+
+
+
+#Affichage d'un diagramme en batons des differentes histologies:
+histoPlot <- function(donnees){
+  
+  tmpTab <- table(subset(getAllPatient(), select=c(donnees)))
+  
+  df <- data.frame(
+    group = names(tmpTab),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x=group, y=value))+
+    geom_bar(stat = "identity", aes(fill = group)) +
+    geom_text(aes(label=value), size=5)
+  
+  bp
+  
+ 
+  
+}
+
+
+table_geo2r <- function(nombre){
+  # Version info: R 3.2.3, Biobase 2.30.0, GEOquery 2.40.0, limma 3.26.8
+  # R scripts generated  Sun Jan 7 11:57:28 EST 2018
+  
+  ################################################################
+  #   Differential expression analysis with limma
+  # load series and platform data from GEO
+  
+  #gset <- getGEO("GSE58661", GSEMatrix =TRUE, AnnotGPL=FALSE)
+  gset <- getGEO(filename = "./GSE58661_series_matrix.txt", GSEMatrix =TRUE, AnnotGPL=FALSE, destdir = "./")
+  
+  
+  if (length(gset) > 1) idx <- grep("GPL15048", attr(gset, "names")) else idx <- 1
+  #gset <- gset[[idx]]
+  
+  # make proper column names to match toptable 
+  fvarLabels(gset) <- make.names(fvarLabels(gset))
+  
+  # group names for all samples
+  gsms <- paste0("10101010001101010011101000110101010011000000101011",
+                 "001110111110111011000010011110000001111")
+  sml <- c()
+  for (i in 1:nchar(gsms)) { sml[i] <- substr(gsms,i,i) }
+  
+  # log2 transform
+  ex <- exprs(gset)
+  qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+  LogC <- (qx[5] > 100) ||
+    (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+    (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+  if (LogC) { ex[which(ex <= 0)] <- NaN
+  exprs(gset) <- log2(ex) }
+  
+  # set up the data and proceed with analysis
+  sml <- paste("G", sml, sep="")    # set group names
+  fl <- as.factor(sml)
+  gset$description <- fl
+  design <- model.matrix(~ description + 0, gset)
+  colnames(design) <- levels(fl)
+  fit <- lmFit(gset, design)
+  cont.matrix <- makeContrasts(G1-G0, levels=design)
+  fit2 <- contrasts.fit(fit, cont.matrix)
+  fit2 <- eBayes(fit2, 0.01)
+  tT <- topTable(fit2, adjust="fdr", sort.by="B", number= as.numeric(nombre))
+  
+  #tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","GB_LIST","SPOT_ID"))
+  tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B"))
+  #write.table(tT, file=stdout(), row.names=F, sep="\t")
+  tT
+  
+}
+
+
+
+arbre_foret <- function(type){
+  #recupere les 20 expressions significatives
+  top_gene =  rownames(table_geo2r(20))
+  tab_top = GSE58661_matrix[GSE58661_matrix$ID_REF %in% top_gene, ]
+  
+  #transpose
+  tab_top_transpose = data.frame(t(tab_top))
+  
+  #renomme colonnes
+  mod = as.character(t(tab_top[1]))
+  mod = gsub( "-", "_",mod)
+  names(tab_top_transpose) = mod
+  
+  tab_top_transpose = tab_top_transpose[-1,]
+  tab_top_transpose$Histologie = Lung3_metadata$Histologie
+  
+  #ajoute colone histologie
+  DataNew = tab_top_transpose
+  DataNew$Histologie = as.factor(DataNew$Histologie)
+  
+  
+  # Construction des echantillons d'apprentissage et des echantillons de test
+  set.seed(218) # initialisation du generateur
+  # Extraction des ?chantillons
+  test.ratio=.2 # part de l'?chantillon test
+  npop=nrow(DataNew) # nombre de lignes dans les donn?es
+  nvar=ncol(DataNew) # nombre de colonnes
+  # taille de l'?chantillon test
+  ntest=ceiling(npop*test.ratio)
+  # indices de l'?chantillon test
+  testi=sample(1:npop,ntest)
+  # indices de l'?chantillon d'apprentissage
+  appri=setdiff(1:npop,testi)
+  # construction de l'?chantillon d'apprentissage
+  datapq=DataNew[appri,]
+  # construction de l'?chantillon test
+  datestq=DataNew[testi,]
+  # summary(datapq)
+  
+  for (i in 1:(20)){datapq[,i]=as.numeric(as.character(datapq[,i]))}
+  for (i in 1:(20)){datestq[,i]=as.numeric(as.character(datestq[,i]))}
+  
+  
+  # Exemple de mod?lisation avec un arbre de d?cision
+  if (type=="arbre"){
+    fitq.tree=rpart(Histologie~.,data=datapq,
+                    parms=list(split= "gini" ),method="class",
+                    control=rpart.control(minsplit= 1 ,cp=0.048))
+    
+    #summary(fitq.tree) # description de l'arbre
+    
+    visTree(fitq.tree)
+  } else if (type=="foret"){
+    # For?t al?atoire
+    # Avec les seules variables quantitatives :
+    fit=randomForest(Histologie~.,data=datapq,do.trace=20,
+                     importance=TRUE,norm.vote=FALSE)
+    #print(fit)
+    # Importance de chaque variable
+    print(round(fit$importance, 2))
+    print(table(predict(fit,datestq),datestq$Histologie))
+  }
+}
+
+
+
+
+
+
+# Shiny
+ui <- fluidPage(
+  useShinyjs(),
+  title= "ShinyAppLungCancer",
+  
+  sidebarLayout(
+    sidebarPanel (
+      
+      selectInput(
+        "patient", 
+        h3("Donnee patient : "),
+        listePatient
+      ),
+      
+      selectInput(
+        "donnees", 
+        h3("Histogrammes : "),
+        colnames(getAllPatient())
+        
+      ),
+      
+      sliderInput(
+        "geo_nombre", 
+        h3("Nombre de lignes geo2r :"),
+        min = 1, max = 250, value = 20)
+      
+    ),
+    
+    mainPanel (
+      tabsetPanel(
+        tabPanel("Donnee patient",DT::dataTableOutput('table')),
+        tabPanel("Liste des patients",DT::dataTableOutput('tableAllPatients')),
+        tabPanel("Histogrammes", plotlyOutput('histogrammes')),
+        tabPanel("Geo2r", DT::dataTableOutput('geo2r_out')),
+        tabPanel("Arbre", visNetworkOutput('arbre_out')),
+        tabPanel("Foret", verbatimTextOutput('foret_out'))
+        
+      )
+      
+    )
+    
+  )
+)  
+
+
+
+server <- function(input, output) {
+  
+  #Une fois qu'on s?lectionne un patient, on va appeler notre fonction
+  #getpatient... qui nous retournera un tableau
+  
+  output$table <- DT::renderDataTable(
+    getPatient(input$patient), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #On affichera tous les patients si on clique sur le bouton
+  output$tableAllPatients  <- DT::renderDataTable(
+    getAllPatient(), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #histogrammes :
+  output$histogrammes <- renderPlotly({
+    histoPlot(as.character(input$donnees))
+  })
+  
+  #geo2r :
+  output$geo2r_out <- DT::renderDataTable(
+    table_geo2r(input$geo_nombre), options = list(lengthChange = FALSE)
+  )
+  
+  #arbre
+  output$arbre_out <- renderVisNetwork(
+    arbre_foret("arbre")
+  )
+  
+  output$foret_out <- renderPrint(
+    arbre_foret("foret")
+  )
+  
+  
+  
+}
+
+shinyApp(ui = ui, server = server)
+
+library(shiny)
+library(shinyjs)
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(plotly)
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("Biobase")
+library(Biobase)
+#biocLite("GEOquery")
+library(GEOquery)
+#biocLite("limma")
+library(limma)
+
+
+library(rpart)
+library(visNetwork)
+
+library(randomForest)
+
+
+
+#setwd("/Users/diana")
+
+Lung3_metadata <- read.csv('Lung3.metadata.csv', sep=";",na.strings = "Not Available", header=T)
+GSE58661_matrix = read.csv('GSE58661_series_matrix.txt', sep="\t", header=T, comment.char="!")
+
+prelevement = names(GSE58661_matrix)
+Lung3_metadata$prelevement = prelevement[2:90]
+
+# Chargement de la liste patients et lui affecter un nouveau nom:
+listePatient <- Lung3_metadata %>% 
+  select(title)
+
+# Renomer certaines colonnes les plus pertinentes (meilleure lisibilit?):
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.gender"] <- "Sexe"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.histology"] <- "Histologie"
+names(Lung3_metadata)[names(Lung3_metadata)=="source.location"] <- "Source"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.tumor.size.maximumdiameter"] <- "Taille_Tumeur"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.primary.tumor"] <- "Stade_T"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.nodes"] <- "Stade_N"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.mets"] <- "Stade_M"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.grade"] <- "Grade"
+names(Lung3_metadata)[names(Lung3_metadata)=="prelevement"] <- "Prelevement"
+
+
+# On regroupe en 2 groupes histologiques
+Lung3_metadata$Histologie <- ifelse(
+  Lung3_metadata$Histologie == "Adenocarcinoma With Mucinous Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma With Papillary Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Acinar Type"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mixed"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mucinous With Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, NOS"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Papillary, NOS"
+  | Lung3_metadata$Histologie == "Solid Type And Acinar"
+  | Lung3_metadata$Histologie == "Papillary Type AND Adenocarcinoma, Bronchiolo-alveolar Features"
+  
+  , "Adenocarcinome"
+  ,  ifelse(
+    Lung3_metadata$Histologie == "Squamous Cell Carcinoma, NOS"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify) with adeno features"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify)endobronchial"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Papillary"
+    | Lung3_metadata$Histologie == "Non-Small Cell"
+    | Lung3_metadata$Histologie == "Non-Small Cell, Pleomorphic Type"
+    | Lung3_metadata$Histologie == "Carcinoma, Large Cell, Neuroendocrine"
+    
+    , "Carcinome"
+    , Lung3_metadata$Histologie)
+)
+
+
+#On r?cup?re le patient grace a son Id en evitant les doublons:
+getPatient <- function(id) {
+  resultPatient <- Lung3_metadata %>% 
+    filter(title == id) %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade, Prelevement)
+}
+
+getAllPatient <- function(){
+  resultAllPatient <- Lung3_metadata %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade)
+}
+
+
+
+#Affichage d'un diagramme en batons des differentes histologies:
+histoPlot <- function(donnees){
+  
+  tmpTab <- table(subset(getAllPatient(), select=c(donnees)))
+  
+  df <- data.frame(
+    group = names(tmpTab),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x=group, y=value))+
+    geom_bar(stat = "identity", aes(fill = group)) +
+    geom_text(aes(label=value), size=5)
+  
+  bp
+  
+  #plot(tmpTab, col= rainbow(10), main="Types des Histologies",lwd=30,type="h",lend="butt",ylab="")
+  
+}
+
+
+table_geo2r <- function(nombre){
+  # Version info: R 3.2.3, Biobase 2.30.0, GEOquery 2.40.0, limma 3.26.8
+  # R scripts generated  Sun Jan 7 11:57:28 EST 2018
+  
+  ################################################################
+  #   Differential expression analysis with limma
+  # load series and platform data from GEO
+  
+  #gset <- getGEO("GSE58661", GSEMatrix =TRUE, AnnotGPL=FALSE)
+  gset <- getGEO(filename = "./GSE58661_series_matrix.txt", GSEMatrix =TRUE, AnnotGPL=FALSE, destdir = "./")
+  
+  
+  if (length(gset) > 1) idx <- grep("GPL15048", attr(gset, "names")) else idx <- 1
+  #gset <- gset[[idx]]
+  
+  # make proper column names to match toptable 
+  fvarLabels(gset) <- make.names(fvarLabels(gset))
+  
+  # group names for all samples
+  gsms <- paste0("10101010001101010011101000110101010011000000101011",
+                 "001110111110111011000010011110000001111")
+  sml <- c()
+  for (i in 1:nchar(gsms)) { sml[i] <- substr(gsms,i,i) }
+  
+  # log2 transform
+  ex <- exprs(gset)
+  qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+  LogC <- (qx[5] > 100) ||
+    (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+    (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+  if (LogC) { ex[which(ex <= 0)] <- NaN
+  exprs(gset) <- log2(ex) }
+  
+  # set up the data and proceed with analysis
+  sml <- paste("G", sml, sep="")    # set group names
+  fl <- as.factor(sml)
+  gset$description <- fl
+  design <- model.matrix(~ description + 0, gset)
+  colnames(design) <- levels(fl)
+  fit <- lmFit(gset, design)
+  cont.matrix <- makeContrasts(G1-G0, levels=design)
+  fit2 <- contrasts.fit(fit, cont.matrix)
+  fit2 <- eBayes(fit2, 0.01)
+  tT <- topTable(fit2, adjust="fdr", sort.by="B", number= as.numeric(nombre))
+  
+  #tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","GB_LIST","SPOT_ID"))
+  tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B"))
+  #write.table(tT, file=stdout(), row.names=F, sep="\t")
+  tT
+  
+}
+
+
+
+arbre_foret <- function(type){
+  #recupere les 20 expressions significatives
+  top_gene =  rownames(table_geo2r(20))
+  tab_top = GSE58661_matrix[GSE58661_matrix$ID_REF %in% top_gene, ]
+  
+  #transpose
+  tab_top_transpose = data.frame(t(tab_top))
+  
+  #renomme colonnes
+  mod = as.character(t(tab_top[1]))
+  mod = gsub( "-", "_",mod)
+  names(tab_top_transpose) = mod
+  
+  tab_top_transpose = tab_top_transpose[-1,]
+  tab_top_transpose$Histologie = Lung3_metadata$Histologie
+  
+  #ajoute colone histologie
+  DataNew = tab_top_transpose
+  DataNew$Histologie = as.factor(DataNew$Histologie)
+  
+  
+  # Construction des echantillons d'apprentissage et des echantillons de test
+  set.seed(218) # initialisation du generateur
+  # Extraction des ?chantillons
+  test.ratio=.2 # part de l'?chantillon test
+  npop=nrow(DataNew) # nombre de lignes dans les donn?es
+  nvar=ncol(DataNew) # nombre de colonnes
+  # taille de l'?chantillon test
+  ntest=ceiling(npop*test.ratio)
+  # indices de l'?chantillon test
+  testi=sample(1:npop,ntest)
+  # indices de l'?chantillon d'apprentissage
+  appri=setdiff(1:npop,testi)
+  # construction de l'?chantillon d'apprentissage
+  datapq=DataNew[appri,]
+  # construction de l'?chantillon test
+  datestq=DataNew[testi,]
+  # summary(datapq)
+  
+  for (i in 1:(20)){datapq[,i]=as.numeric(as.character(datapq[,i]))}
+  for (i in 1:(20)){datestq[,i]=as.numeric(as.character(datestq[,i]))}
+  
+  
+  # Exemple de mod?lisation avec un arbre de d?cision
+  if (type=="arbre"){
+    fitq.tree=rpart(Histologie~.,data=datapq,
+                    parms=list(split= "gini" ),method="class",
+                    control=rpart.control(minsplit= 1 ,cp=0.048))
+    
+    #summary(fitq.tree) # description de l'arbre
+    
+    visTree(fitq.tree)
+  } else if (type=="foret"){
+    # For?t al?atoire
+    # Avec les seules variables quantitatives :
+    fit=randomForest(Histologie~.,data=datapq,do.trace=20,
+                     importance=TRUE,norm.vote=FALSE)
+    #print(fit)
+    # Importance de chaque variable
+    print(round(fit$importance, 2))
+    print(table(predict(fit,datestq),datestq$Histologie))
+  }
+}
+
+
+
+
+
+
+# Shiny
+ui <- fluidPage(
+  useShinyjs(),
+  title= "ShinyAppLungCancer",
+  
+  sidebarLayout(
+    sidebarPanel (
+      
+      selectInput(
+        "patient", 
+        h3("Donnee patient : "),
+        listePatient
+      ),
+      
+      selectInput(
+        "donnees", 
+        h3("Histogrammes : "),
+        colnames(getAllPatient())
+        
+      ),
+      
+      sliderInput(
+        "geo_nombre", 
+        h3("Nombre de lignes geo2r :"),
+        min = 1, max = 250, value = 20)
+      
+    ),
+    
+    mainPanel (
+      tabsetPanel(
+        tabPanel("Donnee patient",DT::dataTableOutput('table')),
+        tabPanel("Liste des patients",DT::dataTableOutput('tableAllPatients')),
+        tabPanel("Histogrammes", plotlyOutput('histogrammes')),
+        tabPanel("Geo2r", DT::dataTableOutput('geo2r_out')),
+        tabPanel("Arbre", visNetworkOutput('arbre_out')),
+        tabPanel("Foret", verbatimTextOutput('foret_out'))
+        
+      )
+      
+    )
+    
+  )
+)  
+
+
+
+server <- function(input, output) {
+  
+  #Une fois qu'on s?lectionne un patient, on va appeler notre fonction
+  #getpatient... qui nous retournera un tableau
+  
+  output$table <- DT::renderDataTable(
+    getPatient(input$patient), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #On affichera tous les patients si on clique sur le bouton
+  output$tableAllPatients  <- DT::renderDataTable(
+    getAllPatient(), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #histogrammes :
+  output$histogrammes <- renderPlotly({
+    histoPlot(as.character(input$donnees))
+  })
+  
+  #geo2r :
+  output$geo2r_out <- DT::renderDataTable(
+    table_geo2r(input$geo_nombre), options = list(lengthChange = FALSE)
+  )
+  
+  #arbre
+  output$arbre_out <- renderVisNetwork(
+    arbre_foret("arbre")
+  )
+  
+  output$foret_out <- renderPrint(
+    arbre_foret("foret")
+  )
+  
+  
+  
+}
+
+shinyApp(ui = ui, server = server)
+
+library(shiny)
+library(shinyjs)
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(plotly)
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("Biobase")
+library(Biobase)
+#biocLite("GEOquery")
+library(GEOquery)
+#biocLite("limma")
+library(limma)
+
+
+library(rpart)
+library(visNetwork)
+
+library(randomForest)
+
+
+
+#setwd("/Users/diana")
+
+Lung3_metadata <- read.csv('Lung3.metadata.csv', sep=";",na.strings = "Not Available", header=T)
+GSE58661_matrix = read.csv('GSE58661_series_matrix.txt', sep="\t", header=T, comment.char="!")
+
+prelevement = names(GSE58661_matrix)
+Lung3_metadata$prelevement = prelevement[2:90]
+
+# Chargement de la liste patients et lui affecter un nouveau nom:
+listePatient <- Lung3_metadata %>% 
+  select(title)
+
+# Renomer certaines colonnes les plus pertinentes (meilleure lisibilit?):
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.gender"] <- "Sexe"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.histology"] <- "Histologie"
+names(Lung3_metadata)[names(Lung3_metadata)=="source.location"] <- "Source"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.tumor.size.maximumdiameter"] <- "Taille_Tumeur"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.primary.tumor"] <- "Stade_T"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.nodes"] <- "Stade_N"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.stage.mets"] <- "Stade_M"
+names(Lung3_metadata)[names(Lung3_metadata)=="characteristics.tag.grade"] <- "Grade"
+names(Lung3_metadata)[names(Lung3_metadata)=="prelevement"] <- "Prelevement"
+
+
+# On regroupe en 2 groupes histologiques
+Lung3_metadata$Histologie <- ifelse(
+  Lung3_metadata$Histologie == "Adenocarcinoma With Mucinous Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma With Papillary Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Acinar Type"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mixed"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Mucinous With Bronchiolo-alveolar Features"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, NOS"
+  | Lung3_metadata$Histologie == "Adenocarcinoma, Papillary, NOS"
+  | Lung3_metadata$Histologie == "Solid Type And Acinar"
+  | Lung3_metadata$Histologie == "Papillary Type AND Adenocarcinoma, Bronchiolo-alveolar Features"
+  
+  , "Adenocarcinome"
+  ,  ifelse(
+    Lung3_metadata$Histologie == "Squamous Cell Carcinoma, NOS"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify) with adeno features"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Other (Specify)endobronchial"
+    | Lung3_metadata$Histologie == "Squamous Cell Carcinoma, Papillary"
+    | Lung3_metadata$Histologie == "Non-Small Cell"
+    | Lung3_metadata$Histologie == "Non-Small Cell, Pleomorphic Type"
+    | Lung3_metadata$Histologie == "Carcinoma, Large Cell, Neuroendocrine"
+    
+    , "Carcinome"
+    , Lung3_metadata$Histologie)
+)
+
+
+#On r?cup?re le patient grace a son Id en evitant les doublons:
+getPatient <- function(id) {
+  resultPatient <- Lung3_metadata %>% 
+    filter(title == id) %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade, Prelevement)
+}
+
+getAllPatient <- function(){
+  resultAllPatient <- Lung3_metadata %>%
+    select(Sexe, Histologie, Source, Taille_Tumeur, Stade_T, Stade_N, Stade_M, Grade)
+}
+
+
+
+#Affichage d'un diagramme en batons des differentes histologies:
+histoPlot <- function(donnees){
+  
+  tmpTab <- table(subset(getAllPatient(), select=c(donnees)))
+  
+  df <- data.frame(
+    group = names(tmpTab),
+    value = c(tmpTab)
+  )
+  
+  bp<- ggplot(df, aes(x=group, y=value))+
+    geom_bar(stat = "identity", aes(fill = group)) +
+    geom_text(aes(label=value), size=5)
+  
+  bp
+  
+  #plot(tmpTab, col= rainbow(10), main="Types des Histologies",lwd=30,type="h",lend="butt",ylab="")
+  
+}
+
+
+table_geo2r <- function(nombre){
+  # Version info: R 3.2.3, Biobase 2.30.0, GEOquery 2.40.0, limma 3.26.8
+  # R scripts generated  Sun Jan 7 11:57:28 EST 2018
+  
+  ################################################################
+  #   Differential expression analysis with limma
+  # load series and platform data from GEO
+  
+  #gset <- getGEO("GSE58661", GSEMatrix =TRUE, AnnotGPL=FALSE)
+  gset <- getGEO(filename = "./GSE58661_series_matrix.txt", GSEMatrix =TRUE, AnnotGPL=FALSE, destdir = "./")
+  
+  
+  if (length(gset) > 1) idx <- grep("GPL15048", attr(gset, "names")) else idx <- 1
+  #gset <- gset[[idx]]
+  
+  # make proper column names to match toptable 
+  fvarLabels(gset) <- make.names(fvarLabels(gset))
+  
+  # group names for all samples
+  gsms <- paste0("10101010001101010011101000110101010011000000101011",
+                 "001110111110111011000010011110000001111")
+  sml <- c()
+  for (i in 1:nchar(gsms)) { sml[i] <- substr(gsms,i,i) }
+  
+  # log2 transform
+  ex <- exprs(gset)
+  qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+  LogC <- (qx[5] > 100) ||
+    (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+    (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+  if (LogC) { ex[which(ex <= 0)] <- NaN
+  exprs(gset) <- log2(ex) }
+  
+  # set up the data and proceed with analysis
+  sml <- paste("G", sml, sep="")    # set group names
+  fl <- as.factor(sml)
+  gset$description <- fl
+  design <- model.matrix(~ description + 0, gset)
+  colnames(design) <- levels(fl)
+  fit <- lmFit(gset, design)
+  cont.matrix <- makeContrasts(G1-G0, levels=design)
+  fit2 <- contrasts.fit(fit, cont.matrix)
+  fit2 <- eBayes(fit2, 0.01)
+  tT <- topTable(fit2, adjust="fdr", sort.by="B", number= as.numeric(nombre))
+  
+  #tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","GB_LIST","SPOT_ID"))
+  tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B"))
+  #write.table(tT, file=stdout(), row.names=F, sep="\t")
+  tT
+  
+}
+
+
+
+arbre_foret <- function(type){
+  #recupere les 20 expressions significatives
+  top_gene =  rownames(table_geo2r(20))
+  tab_top = GSE58661_matrix[GSE58661_matrix$ID_REF %in% top_gene, ]
+  
+  #transpose
+  tab_top_transpose = data.frame(t(tab_top))
+  
+  #renomme colonnes
+  mod = as.character(t(tab_top[1]))
+  mod = gsub( "-", "_",mod)
+  names(tab_top_transpose) = mod
+  
+  tab_top_transpose = tab_top_transpose[-1,]
+  tab_top_transpose$Histologie = Lung3_metadata$Histologie
+  
+  #ajoute colone histologie
+  DataNew = tab_top_transpose
+  DataNew$Histologie = as.factor(DataNew$Histologie)
+  
+  
+  # Construction des echantillons d'apprentissage et des echantillons de test
+  set.seed(218) # initialisation du generateur
+  # Extraction des ?chantillons
+  test.ratio=.2 # part de l'?chantillon test
+  npop=nrow(DataNew) # nombre de lignes dans les donn?es
+  nvar=ncol(DataNew) # nombre de colonnes
+  # taille de l'?chantillon test
+  ntest=ceiling(npop*test.ratio)
+  # indices de l'?chantillon test
+  testi=sample(1:npop,ntest)
+  # indices de l'?chantillon d'apprentissage
+  appri=setdiff(1:npop,testi)
+  # construction de l'?chantillon d'apprentissage
+  datapq=DataNew[appri,]
+  # construction de l'?chantillon test
+  datestq=DataNew[testi,]
+  # summary(datapq)
+  
+  for (i in 1:(20)){datapq[,i]=as.numeric(as.character(datapq[,i]))}
+  for (i in 1:(20)){datestq[,i]=as.numeric(as.character(datestq[,i]))}
+  
+  
+  # Exemple de mod?lisation avec un arbre de d?cision
+  if (type=="arbre"){
+    fitq.tree=rpart(Histologie~.,data=datapq,
+                    parms=list(split= "gini" ),method="class",
+                    control=rpart.control(minsplit= 1 ,cp=0.048))
+    
+    #summary(fitq.tree) # description de l'arbre
+    
+    visTree(fitq.tree)
+  } else if (type=="foret"){
+    # For?t al?atoire
+    # Avec les seules variables quantitatives :
+    fit=randomForest(Histologie~.,data=datapq,do.trace=20,
+                     importance=TRUE,norm.vote=FALSE)
+    #print(fit)
+    # Importance de chaque variable
+    print(round(fit$importance, 2))
+    print(table(predict(fit,datestq),datestq$Histologie))
+  }
+}
+
+
+
+
+
+
+# Shiny
+ui <- fluidPage(
+  useShinyjs(),
+  title= "ShinyAppLungCancer",
+  
+  sidebarLayout(
+    sidebarPanel (
+      
+      selectInput(
+        "patient", 
+        h3("Donnee patient : "),
+        listePatient
+      ),
+      
+      selectInput(
+        "donnees", 
+        h3("Histogrammes : "),
+        colnames(getAllPatient())
+        
+      ),
+      
+      sliderInput(
+        "geo_nombre", 
+        h3("Nombre de lignes geo2r :"),
+        min = 1, max = 250, value = 20)
+      
+    ),
+    
+    mainPanel (
+      tabsetPanel(
+        tabPanel("Donnee patient",DT::dataTableOutput('table')),
+        tabPanel("Liste des patients",DT::dataTableOutput('tableAllPatients')),
+        tabPanel("Histogrammes", plotlyOutput('histogrammes')),
+        tabPanel("Geo2r", DT::dataTableOutput('geo2r_out')),
+        tabPanel("Arbre", visNetworkOutput('arbre_out')),
+        tabPanel("Foret", verbatimTextOutput('foret_out'))
+        
+      )
+      
+    )
+    
+  )
+)  
+
+
+
+server <- function(input, output) {
+  
+  #Une fois qu'on s?lectionne un patient, on va appeler notre fonction
+  #getpatient... qui nous retournera un tableau
+  
+  output$table <- DT::renderDataTable(
+    getPatient(input$patient), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #On affichera tous les patients si on clique sur le bouton
+  output$tableAllPatients  <- DT::renderDataTable(
+    getAllPatient(), options = list(lengthChange = FALSE)
+  )
+  
+  
+  #histogrammes :
+  output$histogrammes <- renderPlotly({
+    histoPlot(as.character(input$donnees))
+  })
+  
+  #geo2r :
+  output$geo2r_out <- DT::renderDataTable(
+    table_geo2r(input$geo_nombre), options = list(lengthChange = FALSE)
+  )
+  
+  #arbre
+  output$arbre_out <- renderVisNetwork(
+    arbre_foret("arbre")
+  )
+  
+  output$foret_out <- renderPrint(
+    arbre_foret("foret")
+  )
+  
+  
+ 
+}
+
+shinyApp(ui = ui, server = server)
